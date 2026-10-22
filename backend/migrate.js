@@ -39,8 +39,8 @@ async function applyMigration(file) {
   }
 }
 
-async function run() {
-  await ensureMigrationsTable();
+async function runUp() {
+  
   const appliedMigrations = await getAppliedMigrations();
   const pendingMigrations = getMigrationFiles().filter(file => !appliedMigrations.includes(file));
   console.log(`Applied migrations: ${appliedMigrations.length}`);
@@ -52,11 +52,59 @@ async function run() {
   }
   }
 
+async function getLastAppliedMigration() {
+  const result = await db.query('SELECT name FROM _migrations ORDER BY id DESC LIMIT 1');
+  return result.rows[0] ? result.rows[0].name : null;
+}
+
+async function rollbackMigration(file) {
+  const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+  const { down } = parseMigrationFile(sql);
+  if (!down) throw new Error(`${file} has no -- DOWN section`);
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    await client.query(down);
+    await client.query('DELETE FROM _migrations WHERE name = $1', [file]);
+    await client.query('COMMIT');
+    console.log(`Rolled back: ${file}`);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function runDown() {
+  const last = await getLastAppliedMigration();
+  if (!last) {
+    console.log('Nothing to roll back');
+    return;
+  }
+    await rollbackMigration(last);
+}
+
+async function run() {
+  const command = process.argv[2] || 'up';
+  if (command !== 'up' && command !== 'down') {
+    throw new Error(`Unknown command "${command}". Use "up" or "down".`);
+  }
+  await ensureMigrationsTable();
+  return command === 'up' ? runUp() : runDown();
+}
+
 function parseMigrationFile(sql){
   const [upPart, downPart = ''] = sql.split('-- DOWN');
   return { 
     up: upPart.replace('-- UP', '').trim(),
     down: downPart.trim() };
+}
+  
+
+async function getAppliedMigrations() {
+  const result = await db.query('SELECT name FROM _migrations ORDER BY name');
+  return result.rows.map(row => row.name);
 }
 
 run()
@@ -68,9 +116,3 @@ run()
         console.error('Error running migrations:', err);
         process.exit(1);
 });
-  
-
-async function getAppliedMigrations() {
-  const result = await db.query('SELECT name FROM _migrations ORDER BY name');
-  return result.rows.map(row => row.name);
-}
