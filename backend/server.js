@@ -1,5 +1,6 @@
 const express = require('express');
 const config = require('./config');
+const db = require('./db');
 const { ERROR_CODES, sendError } = require('./utils/errors');
 
 const app = express();
@@ -7,6 +8,11 @@ const port = config.port;
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+app.get('/health/db', async (req, res) => {
+  await db.query('SELECT 1');
+  res.json({ status: 'ok', db: 'ok' });
 });
 
 app.use((req, res) => {
@@ -19,6 +25,16 @@ app.use((err, req, res, next) => {
   sendError(res, 500, ERROR_CODES.INTERNAL_ERROR, 'Something went wrong');
 });
 
-app.listen(port, () => {
-  console.log(`Mehfil backend is running on port ${port}`);
-});
+async function start() {
+  try {
+    await db.query('SELECT 1');
+    app.listen(port, () => {
+      console.log(`Mehfil backend is running on port ${port}`);
+    });
+  } catch (err) {
+    console.error('Database startup check failed:', err.message);
+    process.exit(1);
+  }
+}
+
+start();
